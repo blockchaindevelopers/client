@@ -97,10 +97,13 @@ namespace {
 
 bool Application::configBackwardMigration()
 {
-    auto accountKeys = AccountManager::backwardMigrationKeys();
-    auto folderKeys = FolderMan::backwardMigrationKeys();
+    QStringList deleteKeys, ignoreKeys;
+    AccountManager::backwardMigrationKeys(&deleteKeys, &ignoreKeys);
+    FolderMan::backwardMigrationKeys(&deleteKeys, &ignoreKeys);
 
-    bool containsFutureData = !accountKeys.isEmpty() || !folderKeys.isEmpty();
+    bool containsFutureData = !deleteKeys.isEmpty() || !ignoreKeys.isEmpty();
+
+    // ### Message only once, even if some things end up being ignored every time
 
     // Deal with unreadable accounts
     if (!containsFutureData)
@@ -108,6 +111,7 @@ bool Application::configBackwardMigration()
 
     const auto backupFile = ConfigFile().backup();
 
+    // ### some of these will lead to deletion, some will just be ignored, should be reflected in message
     QMessageBox box(
         QMessageBox::Warning,
         APPLICATION_SHORTNAME,
@@ -130,10 +134,8 @@ bool Application::configBackwardMigration()
     auto settings = ConfigFile::settingsWithGroup("foo");
     settings->endGroup();
 
-    // Wipe the keys from the future
-    for (const auto &badKey : accountKeys)
-        settings->remove(badKey);
-    for (const auto &badKey : folderKeys)
+    // Wipe confusing keys from the future, ignore the others
+    for (const auto &badKey : deleteKeys)
         settings->remove(badKey);
 
     return true;

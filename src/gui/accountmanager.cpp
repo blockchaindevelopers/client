@@ -52,12 +52,21 @@ AccountManager *AccountManager::instance()
 
 bool AccountManager::restore()
 {
+    QStringList deleteKeys, ignoreKeys;
+    backwardMigrationKeys(&deleteKeys, &ignoreKeys);
+
     auto settings = ConfigFile::settingsWithGroup(QLatin1String(accountsC));
     if (settings->status() != QSettings::NoError) {
         qCWarning(lcAccountManager) << "Could not read settings from" << settings->fileName()
                                     << settings->status();
         return false;
     }
+
+    if (deleteKeys.contains(settings->group())) {
+        qCWarning(lcAccountManager) << "Accounts structure is too new, ignoring";
+        return true;
+    }
+
 
     // If there are no accounts, check the old format.
     if (settings->childGroups().isEmpty()
@@ -68,11 +77,16 @@ bool AccountManager::restore()
 
     foreach (const auto &accountId, settings->childGroups()) {
         settings->beginGroup(accountId);
-        if (auto acc = loadAccountHelper(*settings)) {
-            acc->_id = accountId;
-            if (auto accState = AccountState::loadFromSettings(acc, *settings)) {
-                addAccountState(accState);
+        if (!ignoreKeys.contains(settings->group())) {
+            if (auto acc = loadAccountHelper(*settings)) {
+                acc->_id = accountId;
+                if (auto accState = AccountState::loadFromSettings(acc, *settings)) {
+                    addAccountState(accState);
+                }
             }
+        } else {
+            qCWarning(lcAccountManager) << "Account" << accountId << "is too new, ignoring";
+            _additionalBlockedAccountIds.insert(accountId);
         }
         settings->endGroup();
     }
@@ -80,25 +94,23 @@ bool AccountManager::restore()
     return true;
 }
 
-QStringList AccountManager::backwardMigrationKeys()
+bool AccountManager::backwardMigrationKeys(QStringList *deleteKeys, QStringList *ignoreKeys)
 {
     auto settings = ConfigFile::settingsWithGroup(QLatin1String(accountsC));
-    QStringList badKeys;
-
     const int accountsVersion = settings->value(QLatin1String(versionC)).toInt();
     if (accountsVersion <= maxAccountsVersion) {
         foreach (const auto &accountId, settings->childGroups()) {
             settings->beginGroup(accountId);
             const int accountVersion = settings->value(QLatin1String(versionC), 1).toInt();
             if (accountVersion > maxAccountVersion) {
-                badKeys.append(settings->group());
+                ignoreKeys->append(settings->group());
             }
             settings->endGroup();
         }
     } else {
-        badKeys.append(settings->group());
+        deleteKeys->append(settings->group());
     }
-    return badKeys;
+    return !deleteKeys->isEmpty() || !ignoreKeys->isEmpty();
 }
 
 bool AccountManager::restoreFromLegacySettings()
@@ -366,6 +378,8 @@ bool AccountManager::isAccountIdAvailable(const QString &id) const
             return false;
         }
     }
+    if (_additionalBlockedAccountIds.contains(id))
+        return false;
     return true;
 }
 

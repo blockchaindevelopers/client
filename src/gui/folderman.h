@@ -72,7 +72,7 @@ public:
      * Returns a list of keys that can't be read because they are from
      * future versions.
      */
-    static QStringList backwardMigrationKeys();
+    static bool backwardMigrationKeys(QStringList *deleteKeys, QStringList *ignoreKeys);
 
     OCC::Folder::Map map();
 
@@ -312,6 +312,9 @@ private:
     Folder *_currentSyncFolder;
     QPointer<Folder> _lastSyncFolder;
     bool _syncEnabled;
+
+    /// Folder aliases from the settings that weren't read
+    QSet<QString> _additionalBlockedFolderAliases;
 
     /// Starts regular etag query jobs
     QTimer _etagPollTimer;

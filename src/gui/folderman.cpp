@@ -165,6 +165,9 @@ int FolderMan::setupFolders()
 {
     unloadAndDeleteAllFolders();
 
+    QStringList deleteKeys, ignoreKeys;
+    backwardMigrationKeys(&deleteKeys, &ignoreKeys);
+
     auto settings = ConfigFile::settingsWithGroup(QLatin1String("Accounts"));
     const auto accountsWithSettings = settings->childGroups();
     if (accountsWithSettings.isEmpty()) {
@@ -184,19 +187,18 @@ int FolderMan::setupFolders()
         }
         settings->beginGroup(id);
 
-        settings->beginGroup(QLatin1String("Folders"));
-        setupFoldersHelper(*settings, account, true);
-        settings->endGroup();
+        auto process = [&](const QString &groupName, bool backwardsCompat = false) {
+            settings->beginGroup(groupName);
+            setupFoldersHelper(*settings, account, backwardsCompat);
+            settings->endGroup();
 
-        // See Folder::saveToSettings for details about why this exists.
-        settings->beginGroup(QLatin1String("Multifolders"));
-        setupFoldersHelper(*settings, account, false);
-        settings->endGroup();
+        };
 
-        // See Folder::saveToSettings for details about why this exists.
-        settings->beginGroup(QLatin1String("FoldersWithPlaceholders"));
-        setupFoldersHelper(*settings, account, false);
-        settings->endGroup();
+        process(QStringLiteral("Folders"), true);
+
+        // See Folder::saveToSettings for details about why these exists.
+        process(QStringLiteral("Multifolders"));
+        process(QStringLiteral("FoldersWithPlaceholders"));
 
         settings->endGroup(); // <account>
     }
@@ -209,6 +211,7 @@ int FolderMan::setupFolders()
 void FolderMan::setupFoldersHelper(QSettings &settings, AccountStatePtr account, bool backwardsCompatible)
 {
     foreach (const auto &folderAlias, settings.childGroups()) {
+        // ### skip folders with too-new version
         FolderDefinition folderDefinition;
         if (FolderDefinition::load(settings, folderAlias, &folderDefinition)) {
             auto defaultJournalPath = folderDefinition.defaultJournalPath(account->account());
@@ -274,9 +277,8 @@ int FolderMan::setupFoldersMigration()
     return _folderMap.size();
 }
 
-QStringList FolderMan::backwardMigrationKeys()
+bool FolderMan::backwardMigrationKeys(QStringList *deleteKeys, QStringList *ignoreKeys)
 {
-    QStringList badKeys;
     auto settings = ConfigFile::settingsWithGroup(QLatin1String("Accounts"));
 
     auto processSubgroup = [&](const QString &name) {
@@ -287,12 +289,12 @@ QStringList FolderMan::backwardMigrationKeys()
                 settings->beginGroup(folderAlias);
                 const int folderVersion = settings->value(QLatin1String(versionC), 1).toInt();
                 if (folderVersion > FolderDefinition::maxSettingsVersion()) {
-                    badKeys.append(settings->group());
+                    ignoreKeys->append(settings->group());
                 }
                 settings->endGroup();
             }
         } else {
-            badKeys.append(settings->group());
+            deleteKeys->append(settings->group());
         }
         settings->endGroup();
     };
@@ -304,7 +306,8 @@ QStringList FolderMan::backwardMigrationKeys()
         processSubgroup("FoldersWithPlaceholders");
         settings->endGroup();
     }
-    return badKeys;
+
+    return !ignoreKeys->isEmpty() || !deleteKeys->isEmpty();
 }
 
 bool FolderMan::ensureJournalGone(const QString &journalDbFile)
@@ -946,6 +949,7 @@ Folder *FolderMan::addFolderInternal(FolderDefinition folderDefinition,
 {
     auto alias = folderDefinition.alias;
     int count = 0;
+    // ### must respect future-aliases too
     while (folderDefinition.alias.isEmpty() || _folderMap.contains(folderDefinition.alias)) {
         // There is already a folder configured with this name and folder names need to be unique
         folderDefinition.alias = alias + QString::number(++count);
